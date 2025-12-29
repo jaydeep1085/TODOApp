@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TODO App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📝 My TODO App</h1>
+            <p class="subtitle">Keep track of your tasks</p>
+        </header>
+
+        <main>
+            <!-- Add Todo Form -->
+            <div class="add-todo-section">
+                <form action="{{ url_for('add_todo') }}" method="POST" class="add-form">
+                    <input 
+                        type="text" 
+                        name="title" 
+                        placeholder="Add a new task..." 
+                        required
+                        class="input-field"
+                    >
+                    <button type="submit" class="btn btn-add">Add Task</button>
+                </form>
+            </div>
+
+            <!-- Stats Section -->
+            {% if todos %}
+            <div class="stats">
+                <span class="stat-item">Total: <strong>{{ todos|length }}</strong></span>
+                <span class="stat-item">Completed: <strong>{{ todos|selectattr('completed')|list|length }}</strong></span>
+                <span class="stat-item">Pending: <strong>{{ todos|rejectattr('completed')|list|length }}</strong></span>
+            </div>
+            {% endif %}
+
+            <!-- Todos List -->
+            <div class="todos-section">
+                {% if todos %}
+                    <ul class="todos-list">
+                        {% for todo in todos %}
+                        <li class="todo-item {% if todo.completed %}completed{% endif %}">
+                            <div class="todo-content">
+                                <form action="{{ url_for('toggle_todo', todo_id=todo.id) }}" method="POST" class="toggle-form">
+                                    <input 
+                                        type="checkbox" 
+                                        class="checkbox"
+                                        {% if todo.completed %}checked{% endif %}
+                                        onchange="this.form.submit()"
+                                    >
+                                </form>
+                                <div class="todo-text">
+                                    <span class="title">{{ todo.title }}</span>
+                                    <span class="date">{{ todo.created_at }}</span>
+                                </div>
+                            </div>
+                            <div class="todo-actions">
+                                <form action="{{ url_for('delete_todo', todo_id=todo.id) }}" method="POST" class="inline-form">
+                                    <button type="submit" class="btn btn-delete" onclick="return confirm('Delete this task?')">Delete</button>
+                                </form>
+                            </div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+
+                    <!-- Clear Completed Button -->
+                    {% if todos|selectattr('completed')|list|length > 0 %}
+                    <div class="clear-section">
+                        <form action="{{ url_for('clear_completed') }}" method="POST" class="inline-form">
+                            <button type="submit" class="btn btn-clear">Clear Completed Tasks</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="empty-state">
+                        <p>🎉 No tasks yet! Add one to get started.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </main>
+
+        <footer>
+            <p>Simple TODO App built with Flask</p>
+        </footer>
+    </div>
+</body>
+</html>
