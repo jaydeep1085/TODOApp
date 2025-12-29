@@ -1,6 +1,6 @@
 # TODO App - Flask Based
 
-A simple and elegant TODO application built with Flask. Keep track of your tasks with ease!
+A simple and elegant TODO application built with Flask. Keep track of your tasks with ease!!
 
 ## Features
 
@@ -12,7 +12,7 @@ A simple and elegant TODO application built with Flask. Keep track of your tasks
 💾 **Persistent Storage** - Tasks are saved to JSON file  
 📱 **Responsive Design** - Works on desktop and mobile devices
 
-## Project Structure
+## Project Structure :
 
 ```
 TODOApp/
