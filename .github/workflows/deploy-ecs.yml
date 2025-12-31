@@ -1,4 +1,4 @@
-name: Deploy to AWS ECS
+name: Deploy to EC2
 
 on:
   push:
@@ -11,49 +11,12 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: todoapp
-  ECS_SERVICE: todoapp-service
-  ECS_CLUSTER: todoapp-cluster
-  ECS_TASK_DEFINITION: todoapp-task
+  EC2_INSTANCE_ID: i-05e623536bebad601
+  APP_PORT: 5000
 
 jobs:
-  build:
-    runs-on: self-hosted
-    outputs:
-      image: ${{ steps.image.outputs.image }}
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-        with:
-          mask-password: 'true'
-
-      - name: Build, tag, and push image to Amazon ECR
-        id: image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
   test:
     runs-on: self-hosted
-    needs: build
     
     steps:
       - name: Checkout code
@@ -83,53 +46,52 @@ jobs:
 
   deploy:
     runs-on: self-hosted
-    needs: [build, test]
+    needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download task definition
+      - name: Deploy to EC2
+        env:
+          PRIVATE_KEY: ${{ secrets.EC2_PRIVATE_KEY }}
+          EC2_USER: ubuntu
+          EC2_HOST: ${{ secrets.EC2_PUBLIC_IP }}
         run: |
-          aws ecs describe-task-definition \
-            --task-definition $ECS_TASK_DEFINITION \
-            --query taskDefinition > task-definition.json
-
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: todoapp
-          image: ${{ needs.build.outputs.image }}
-
-      - name: Deploy to ECS EC2 Cluster
-        run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --task-definition $ECS_TASK_DEFINITION:1 \
-            --force-new-deployment \
-            --region $AWS_REGION
+          mkdir -p ~/.ssh
+          echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
+          
+          # Deploy application
+          ssh -i ~/.ssh/id_rsa $EC2_USER@$EC2_HOST << 'EOFSH'
+            cd /home/ubuntu/todoapp || mkdir -p /home/ubuntu/todoapp
+            cd /home/ubuntu/todoapp
+            git clone https://github.com/${{ github.repository }}.git . || git pull origin main
+            
+            # Stop existing app
+            pkill -f "python.*app.py" || true
+            
+            # Install dependencies
+            python3 -m pip install --upgrade pip
+            pip3 install -r requirements.txt gunicorn
+            
+            # Start app with gunicorn
+            nohup gunicorn -w 4 -b 0.0.0.0:${{ env.APP_PORT }} app.app:app > /var/log/todoapp.log 2>&1 &
+            
+            echo "✅ Application deployed successfully!"
+          EOFSH
 
       - name: Notify deployment success
         if: success()
         run: |
-          echo "✅ Deployment to ECS successful!"
-          echo "Service: ${{ env.ECS_SERVICE }}"
-          echo "Cluster: ${{ env.ECS_CLUSTER }}"
-          echo "Image: ${{ needs.build.outputs.image }}"
+          echo "✅ Deployment to EC2 successful!"
+          echo "Instance: ${{ env.EC2_INSTANCE_ID }}"
+          echo "Access at: http://${{ secrets.EC2_PUBLIC_IP }}:${{ env.APP_PORT }}"
 
       - name: Notify deployment failure
         if: failure()
         run: |
-          echo "❌ Deployment to ECS failed!"
+          echo "❌ Deployment to EC2 failed!"
           exit 1
