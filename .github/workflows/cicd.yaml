@@ -111,30 +111,22 @@ jobs:
 
       - name: Update task definition with new image
         run: |
-          # Extract the task definition without revision number
-          TASK_DEF=$(cat task-definition.json)
-          
-          # Update the image in the task definition
-          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMAGE "${{ needs.build-and-push-image.outputs.ecr-image-uri }}" \
-            '.containerDefinitions[0].image = $IMAGE | 
-             del(.taskDefinitionArn) | 
-             del(.revision) | 
-             del(.status) | 
-             del(.requiresAttributes) | 
-             del(.registeredAt) | 
-             del(.registeredBy)')
-          
-          echo "$NEW_TASK_DEF" > new-task-definition.json
+          # Update only the image, keep all other fields intact
+          jq --arg IMAGE "${{ needs.build-and-push-image.outputs.ecr-image-uri }}" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            task-definition.json > new-task-definition.json
 
       - name: Register new task definition
         id: register-task
         run: |
           TASK_RESPONSE=$(aws ecs register-task-definition \
+            --family ${{ env.ECS_TASK_DEFINITION_NAME }} \
             --cli-input-json file://new-task-definition.json \
             --region ${{ env.AWS_REGION }})
           
           TASK_ARN=$(echo $TASK_RESPONSE | jq -r '.taskDefinition.taskDefinitionArn')
           echo "task-definition-arn=$TASK_ARN" >> $GITHUB_OUTPUT
+          echo "✅ New task definition registered: $TASK_ARN"
 
       - name: Update ECS service with new task definition
         run: |
@@ -143,10 +135,11 @@ jobs:
             --service ${{ env.ECS_SERVICE_NAME }} \
             --task-definition ${{ steps.register-task.outputs.task-definition-arn }} \
             --region ${{ env.AWS_REGION }}
+          echo "✅ Service update initiated"
 
       - name: Wait for service to stabilize
         run: |
-          echo "⏳ Waiting for ECS service to stabilize..."
+          echo "⏳ Waiting for ECS service to stabilize (this may take 2-3 minutes)..."
           aws ecs wait services-stable \
             --cluster ${{ env.ECS_CLUSTER_NAME }} \
             --services ${{ env.ECS_SERVICE_NAME }} \
