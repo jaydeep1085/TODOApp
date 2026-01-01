@@ -1,0 +1,167 @@
+name: Destroy AWS Infrastructure
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER_NAME: todo-app-cluster
+  ECS_SERVICE_NAME: todo-app-taskdef-service-s924q5wl
+  ECS_TASK_DEFINITION_NAME: todo-app-taskdef
+  ECR_REPOSITORY: todoapp-images
+
+jobs:
+  destroy-infrastructure:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Confirm destruction
+        run: |
+          echo "⚠️  WARNING: This will DELETE all AWS infrastructure!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "The following will be PERMANENTLY DELETED:"
+          echo "  ✗ ECS Cluster: ${{ env.ECS_CLUSTER_NAME }}"
+          echo "  ✗ ECS Service: ${{ env.ECS_SERVICE_NAME }}"
+          echo "  ✗ ECR Repository: ${{ env.ECR_REPOSITORY }}"
+          echo "  ✗ Task Definitions: ${{ env.ECS_TASK_DEFINITION_NAME }}"
+          echo "  ✗ Security Groups (used by tasks)"
+          echo "  ✗ Network Interfaces"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Delete ECS Service
+        run: |
+          echo "🗑️  Deleting ECS Service..."
+          aws ecs delete-service \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --service ${{ env.ECS_SERVICE_NAME }} \
+            --force \
+            --region ${{ env.AWS_REGION }} \
+            --no-cli-pager || echo "Service already deleted or doesn't exist"
+          echo "✅ ECS Service deletion initiated"
+
+      - name: Wait for service deletion
+        run: |
+          echo "⏳ Waiting for service to be deleted..."
+          sleep 30
+          aws ecs wait services-inactive \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --services ${{ env.ECS_SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }} || echo "Service not found (already deleted)"
+          echo "✅ Service deleted"
+
+      - name: Deregister all task definition revisions
+        run: |
+          echo "🗑️  Deregistering Task Definitions..."
+          REVISIONS=$(aws ecs list-task-definitions \
+            --family-prefix ${{ env.ECS_TASK_DEFINITION_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinitionArns[]' \
+            --output text)
+          
+          if [ ! -z "$REVISIONS" ]; then
+            for REVISION in $REVISIONS; do
+              echo "Deregistering: $REVISION"
+              aws ecs deregister-task-definition \
+                --task-definition $REVISION \
+                --region ${{ env.AWS_REGION }}
+            done
+            echo "✅ All task definitions deregistered"
+          else
+            echo "ℹ️  No task definitions found"
+          fi
+
+      - name: Delete ECS Cluster
+        run: |
+          echo "🗑️  Deleting ECS Cluster..."
+          aws ecs delete-cluster \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --no-cli-pager || echo "Cluster already deleted or doesn't exist"
+          echo "✅ ECS Cluster deleted"
+
+      - name: Delete ECR Repository
+        run: |
+          echo "🗑️  Deleting ECR Repository..."
+          aws ecr delete-repository \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --region ${{ env.AWS_REGION }} \
+            --force \
+            --no-cli-pager || echo "Repository already deleted or doesn't exist"
+          echo "✅ ECR Repository deleted"
+
+      - name: Delete CloudWatch Log Group
+        run: |
+          echo "🗑️  Deleting CloudWatch Log Group..."
+          aws logs delete-log-group \
+            --log-group-name /ecs/todo-app-taskdef \
+            --region ${{ env.AWS_REGION }} || echo "Log group already deleted or doesn't exist"
+          echo "✅ CloudWatch Log Group deleted"
+
+      - name: Delete IAM Roles (if applicable)
+        run: |
+          echo "🗑️  Cleaning up IAM Roles..."
+          
+          # Detach policies from execution role
+          ROLE_NAME="ecsTaskExecutionRole"
+          ROLE_ARN=$(aws iam get-role --role-name $ROLE_NAME --query 'Role.Arn' --output text 2>/dev/null || echo "")
+          
+          if [ ! -z "$ROLE_ARN" ]; then
+            echo "Detaching policies from $ROLE_NAME..."
+            aws iam detach-role-policy \
+              --role-name $ROLE_NAME \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy || true
+            
+            aws iam detach-role-policy \
+              --role-name $ROLE_NAME \
+              --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly || true
+            
+            echo "Deleting role $ROLE_NAME..."
+            aws iam delete-role --role-name $ROLE_NAME || echo "Role doesn't exist or has inline policies"
+            echo "✅ IAM Execution Role deleted"
+          else
+            echo "ℹ️  IAM Execution Role not found"
+          fi
+
+      - name: List remaining security groups
+        run: |
+          echo "🔍 Checking for remaining security groups..."
+          SECURITY_GROUPS=$(aws ec2 describe-security-groups \
+            --region ${{ env.AWS_REGION }} \
+            --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+            --output text)
+          
+          if [ ! -z "$SECURITY_GROUPS" ]; then
+            echo "⚠️  Remaining security groups (may need manual deletion):"
+            echo $SECURITY_GROUPS
+          else
+            echo "✅ No additional security groups found"
+          fi
+
+      - name: Final Summary
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ DESTRUCTION COMPLETE!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Deleted Resources:"
+          echo "  ✗ ECS Cluster: ${{ env.ECS_CLUSTER_NAME }}"
+          echo "  ✗ ECS Service: ${{ env.ECS_SERVICE_NAME }}"
+          echo "  ✗ Task Definitions: ${{ env.ECS_TASK_DEFINITION_NAME }}"
+          echo "  ✗ ECR Repository: ${{ env.ECR_REPOSITORY }}"
+          echo "  ✗ CloudWatch Logs: /ecs/todo-app-taskdef"
+          echo "  ✗ IAM Role: ecsTaskExecutionRole"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "To fully clean up, you may also want to delete:"
+          echo "  - VPC and Subnets (if created for this project)"
+          echo "  - Security Groups (check AWS console)"
+          echo "  - Elastic Network Interfaces (if orphaned)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
