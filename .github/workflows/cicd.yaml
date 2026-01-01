@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: todoapp-images
@@ -105,22 +110,51 @@ jobs:
             --query 'taskDefinition' > task-definition.json
 
       - name: Update task definition with new image
-        id: task-def
-        uses: aws-actions/ecs-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ needs.build-and-push-image.outputs.ecr-image-uri }}
+        run: |
+          # Extract the task definition without revision number
+          TASK_DEF=$(cat task-definition.json)
+          
+          # Update the image in the task definition
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMAGE "${{ needs.build-and-push-image.outputs.ecr-image-uri }}" \
+            '.containerDefinitions[0].image = $IMAGE | 
+             del(.taskDefinitionArn) | 
+             del(.revision) | 
+             del(.status) | 
+             del(.requiresAttributes) | 
+             del(.registeredAt) | 
+             del(.registeredBy)')
+          
+          echo "$NEW_TASK_DEF" > new-task-definition.json
 
-      - name: Deploy updated task definition to ECS service
-        uses: aws-actions/ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE_NAME }}
-          cluster: ${{ env.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
+      - name: Register new task definition
+        id: register-task
+        run: |
+          TASK_RESPONSE=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --region ${{ env.AWS_REGION }})
+          
+          TASK_ARN=$(echo $TASK_RESPONSE | jq -r '.taskDefinition.taskDefinitionArn')
+          echo "task-definition-arn=$TASK_ARN" >> $GITHUB_OUTPUT
+
+      - name: Update ECS service with new task definition
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --service ${{ env.ECS_SERVICE_NAME }} \
+            --task-definition ${{ steps.register-task.outputs.task-definition-arn }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for service to stabilize
+        run: |
+          echo "⏳ Waiting for ECS service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --services ${{ env.ECS_SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }}
+          echo "✅ Service stabilized successfully!"
 
       - name: Log deployment details
+        if: success()
         run: |
           echo "✅ ECS Fargate Deployment Successful!"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -128,7 +162,7 @@ jobs:
           echo "Cluster: ${{ env.ECS_CLUSTER_NAME }}"
           echo "Region: ${{ env.AWS_REGION }}"
           echo "Image: ${{ needs.build-and-push-image.outputs.ecr-image-uri }}"
-          echo "Task Definition: ${{ env.ECS_TASK_DEFINITION_NAME }}"
+          echo "Task Definition: ${{ steps.register-task.outputs.task-definition-arn }}"
           echo "Container Port: ${{ env.CONTAINER_PORT }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
