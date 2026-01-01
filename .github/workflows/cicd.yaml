@@ -8,7 +8,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: todoapp-images
-  ECS_SERVICE_NAME: todoapp-taskdef-service-s924q5wl
+  ECS_SERVICE_NAME: todo-app-taskdef-service-s924q5wl
   ECS_CLUSTER_NAME: todo-app-cluster
   ECS_TASK_DEFINITION_NAME: todo-app-taskdef
   CONTAINER_NAME: todoapp-container
