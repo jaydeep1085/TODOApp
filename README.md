@@ -64,7 +64,6 @@ python app.py
 http://localhost:5000
 ```
 
-That's it! You're ready to use the TODO app.
 
 ## Usage
 
@@ -80,32 +79,4 @@ That's it! You're ready to use the TODO app.
 - **CSS3** - Responsive styling
 - **JSON** - Data storage
 
-## File Descriptions
 
-- **app.py**: Main application file with all routes and logic
-  - `GET /` - Display all todos
-  - `POST /add` - Add a new todo
-  - `POST /toggle/<id>` - Toggle todo completion status
-  - `POST /delete/<id>` - Delete a todo
-  - `POST /clear-completed` - Clear all completed todos
-
-- **index.html**: Single-page template with form and todo list display
-- **style.css**: Beautiful gradient styling with responsive design
-- **todos.json**: Auto-generated file storing all tasks
-
-## Future Enhancements
-
-- 🔐 User authentication
-- 📅 Due dates for tasks
-- 🏷️ Tags/Categories
-- 🌙 Dark mode
-- 📱 Mobile app
-- 🔄 Task priority levels
-
-## License
-
-This project is open source and available for personal and educational use.
-
----
-
-**Enjoy organizing your tasks! 🚀**
