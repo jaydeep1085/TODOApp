@@ -112,6 +112,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Debug - Print image URI
+        run: |
+          echo "Image URI from build job: ${{ needs.build-and-push-image.outputs.ecr-image-uri }}"
+
       - name: Download current task definition
         run: |
           aws ecs describe-task-definition \
@@ -126,9 +130,22 @@ jobs:
 
       - name: Update task definition with new image
         run: |
-          jq --arg IMAGE "${{ needs.build-and-push-image.outputs.ecr-image-uri }}" \
+          IMAGE_URI="${{ needs.build-and-push-image.outputs.ecr-image-uri }}"
+          echo "Updating with image: $IMAGE_URI"
+          
+          if [ -z "$IMAGE_URI" ]; then
+            echo "ERROR: Image URI is empty! Using latest from ECR instead..."
+            REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+            IMAGE_URI="$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"
+            echo "Using fallback image: $IMAGE_URI"
+          fi
+          
+          jq --arg IMAGE "$IMAGE_URI" \
             '.containerDefinitions[0].image = $IMAGE' \
             cleaned-task-definition.json > new-task-definition.json
+          
+          echo "New task definition image:"
+          cat new-task-definition.json | jq '.containerDefinitions[0].image'
 
       - name: Register new task definition
         id: register-task
