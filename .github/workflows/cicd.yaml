@@ -16,7 +16,7 @@ env:
 jobs:
   # STAGE 1: TEST
   test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - name: Checkout code
