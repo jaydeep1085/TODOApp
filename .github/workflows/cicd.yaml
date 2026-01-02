@@ -207,7 +207,7 @@ jobs:
           echo "Container Port: ${{ env.CONTAINER_PORT }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "SSH into EC2:"
-          echo "ssh -i <your-key.pem> ${{ secrets.EC2_USER }}@$EC2_HOST"
+          echo "ssh -i <app-key.pem> ${{ secrets.EC2_USER }}@$EC2_HOST"
           echo ""
           echo "View logs:"
           echo "docker logs ${{ env.APP_NAME }}"
