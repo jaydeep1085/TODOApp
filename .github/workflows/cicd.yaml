@@ -8,7 +8,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: todoapp-images
-  EC2_INSTANCE_ID: i-0fa4f857ba46a46a1
+  EC2_INSTANCE_ID: i-0e290bb496e59a984
   APP_PORT: 5000
   APP_NAME: todoapp
   CONTAINER_PORT: 5000
@@ -70,6 +70,8 @@ jobs:
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: 'true'
 
       - name: Build and push Docker image
         id: build-image
@@ -84,14 +86,14 @@ jobs:
           docker push $IMAGE_URI
           docker push $LATEST_URI
           
+          echo "::add-mask::$IMAGE_URI"
           echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
-          echo "✅ Docker image pushed: $IMAGE_URI"
+          echo "✅ Docker image pushed successfully"
 
       - name: Build stage completed
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ Build and Push stage completed!"
-          echo "Image: ${{ steps.build-image.outputs.image-uri }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # STAGE 3: DEPLOY TO EC2
@@ -128,15 +130,17 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_HOST: ${{ steps.get-ip.outputs.public-ip }}
           IMAGE_URI: ${{ needs.build-and-push-image.outputs.ecr-image-uri }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           # Setup SSH key
           mkdir -p ~/.ssh
           echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
           
           # Deploy application
-          ssh -i ~/.ssh/id_rsa $EC2_USER@$EC2_HOST << 'EOFSH'
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << 'EOFSH'
           set -e
           
           echo "🚀 Starting deployment..."
@@ -145,12 +149,13 @@ jobs:
           docker stop ${{ env.APP_NAME }} 2>/dev/null || true
           docker rm ${{ env.APP_NAME }} 2>/dev/null || true
           
-          # Get AWS credentials for ECR login
-          export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-          export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          # Set AWS credentials for ECR login
+          export AWS_ACCESS_KEY_ID=${{ env.AWS_ACCESS_KEY_ID }}
+          export AWS_SECRET_ACCESS_KEY=${{ env.AWS_SECRET_ACCESS_KEY }}
           export AWS_DEFAULT_REGION=${{ env.AWS_REGION }}
           
           # Login to ECR
+          echo "🔐 Logging in to ECR..."
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             docker login --username AWS --password-stdin $(echo "${{ env.IMAGE_URI }}" | cut -d'/' -f1)
           
@@ -164,9 +169,6 @@ jobs:
             --name ${{ env.APP_NAME }} \
             -p ${{ env.APP_PORT }}:${{ env.CONTAINER_PORT }} \
             --restart always \
-            --log-driver awslogs \
-            --log-opt awslogs-group=/var/log/todoapp \
-            --log-opt awslogs-region=${{ env.AWS_REGION }} \
             ${{ env.IMAGE_URI }}
           
           echo "✅ Container started successfully!"
@@ -181,9 +183,15 @@ jobs:
           sleep 10
           
           echo "🔍 Testing application..."
-          curl -f http://$EC2_HOST:${{ env.APP_PORT }}/ || echo "⚠️  App may still be starting, trying again..."
-          sleep 5
-          curl http://$EC2_HOST:${{ env.APP_PORT }}/ || true
+          for i in {1..5}; do
+            if curl -f http://$EC2_HOST:${{ env.APP_PORT }}/ > /dev/null 2>&1; then
+              echo "✅ Application is responding!"
+              break
+            else
+              echo "Attempt $i: App not ready yet, retrying..."
+              sleep 5
+            fi
+          done
 
       - name: Log deployment details
         if: success()
@@ -195,12 +203,23 @@ jobs:
           echo "Instance ID: ${{ env.EC2_INSTANCE_ID }}"
           echo "Public IP: $EC2_HOST"
           echo "Application URL: http://$EC2_HOST:${{ env.APP_PORT }}"
-          echo "Docker Image: ${{ needs.build-and-push-image.outputs.ecr-image-uri }}"
+          echo "Container Name: ${{ env.APP_NAME }}"
           echo "Container Port: ${{ env.CONTAINER_PORT }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "SSH into EC2:"
+          echo "ssh -i <your-key.pem> ${{ secrets.EC2_USER }}@$EC2_HOST"
+          echo ""
+          echo "View logs:"
+          echo "docker logs ${{ env.APP_NAME }}"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Handle deployment failure
         if: failure()
+        env:
+          EC2_HOST: ${{ steps.get-ip.outputs.public-ip }}
         run: |
           echo "❌ EC2 deployment failed!"
+          echo "Check EC2 instance logs:"
+          echo "ssh -i <your-key.pem> ${{ secrets.EC2_USER }}@$EC2_HOST"
+          echo "docker logs ${{ env.APP_NAME }}"
           exit 1
