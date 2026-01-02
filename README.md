@@ -12,7 +12,7 @@ A simple and elegant TODO application built with Flask. Keep track of your tasks
 💾 **Persistent Storage** - Tasks are saved to JSON file  
 📱 **Responsive Design** - Works on desktop and mobile devices
 
-## Project Structure :
+## Project Structure : 
 
 ```
 TODOApp/
